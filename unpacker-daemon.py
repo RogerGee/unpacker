@@ -15,6 +15,7 @@ import os
 import re
 import sys
 import pwd
+import select
 import socket
 import argparse
 import subprocess
@@ -24,6 +25,7 @@ KEYVALUE_REGEX = re.compile("^(.+?)=(.+)$")
 BRANCH_CHECK_REGEX = re.compile("^(fatal).*$")
 CONFIGFILE = "unpack.config"
 ENTRYFILE = "unpack.entry"
+SECRETFILE = "unpack.secret"
 appConfig = {
     'latest-rev': {} # key'd by branch
 }
@@ -236,14 +238,18 @@ while True:
         break # let control fall through to the main operation
 
     # we synchronously execute the child process before accepting another client
-    # connection
+    # connection; this is important so we don't interfere with another process
+    # that might be currently unpacking the same repository
     client.close()
     os.wait()
 
 # read input from client; this should consist of just a single line with the
 # following format: [user]:[url]
-f = client.makefile()
-line = f.readline()
+clientReader = client.makefile()
+rlist = select.select([client],[],[],10.0)[0]
+if len(rlist) == 0:
+    fatal(client,"timeout expired")
+line = clientReader.readline()
 
 # parse input line
 try:
@@ -259,11 +265,40 @@ if user.lower() == "root":
 try:
     change_dir(url)
 except Exception as e:
-    fatal(client,str(e))
+    fatal(client,"cannot locate repository: {}".format(str(e)))
 
 # do unpack operation; the try block will catch any errors and write them to the
 # client so they can be reported back to the user
 try:
+    # we need to challenge the specified user (to make sure they really have
+    # access to this repository); we do this by sending 120 random bytes to the
+    # client and having them write it to a file they create; this way we know
+    # they can access and write to the bare repository directory
+    fifoUrl = os.path.join(os.getcwd(),SECRETFILE)
+    try:
+        # may or may not exist; we need to make sure it doesn't
+        os.unlink(fifoUrl)
+    except:
+        pass
+    challenge = os.urandom(120)
+    client.send("{}\n".format(fifoUrl))
+    client.send(challenge)
+    rlist = select.select([client],[],[],10.0)[0]
+    if len(rlist) == 0:
+        fatal(client,"challenge was not answered within enough time")
+    try:
+        with open(fifoUrl,'r') as f:
+            rlist = select.select([f],[],[],10.0)[0]
+            client.recv(4096) # we need to pop everything off (for some reason)
+            if len(rlist) == 0:
+                fatal(client,"challenge was not answered within enough time")
+            response = f.read(120) # we expect to get all 120 bytes at once
+        os.unlink(fifoUrl)
+    except Exception as e:
+        fatal(client,"failed challenge: couldn't open file: {}".format(str(e)))
+    if response != challenge: # binary string comparison
+        fatal(client,"failed challenge")
+
     # load the local configuration files
     load_config(CONFIGFILE,update_app_config,False)
     load_config(ENTRYFILE,update_entry_config,True)
