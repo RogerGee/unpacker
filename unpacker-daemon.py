@@ -15,6 +15,7 @@ import os
 import re
 import sys
 import pwd
+import time
 import select
 import socket
 import argparse
@@ -206,6 +207,67 @@ def save_config(configFile,config):
         for (k,v) in config.iteritems():
             write_config_pair(k,v,f)
 
+def try_delete(url):
+    try:
+        # delete the fifo object just in case it already exists
+        os.unlink(url)
+    except:
+        pass
+
+def hang_up_fifo(url):
+    try:
+        fd = os.open(url,os.O_RDONLY | os.O_NONBLOCK)
+        time.sleep(0.125) # give the client a little bit of air time
+        os.close(fd)
+    except:
+        pass
+
+# create socket wrapper to provide asynchronous readline() operation
+class NetSocket:
+    def __init__(self,sock):
+        self.sock = sock
+        self.extra = ""
+
+    def send(self,buf):
+        return self.sock.send(buf)
+
+    def fileno(self):
+        return self.sock.fileno()
+
+    def readline(self):
+        line = ""
+        while True:
+            rlist = select.select([self.sock],[],[],2.5)[0]
+            if len(rlist) == 0:
+                fatal(self.sock,"message was not sent within timeout")
+            buf = self.extra
+            buf += self.sock.recv(4096)
+            i = buf.find("\n")
+            self.extra = buf[i+1:]
+            if i >= 0:
+                line += buf[:i]
+                break
+        return line
+
+    def readexact(self,numBytes):
+        result = ""
+        while True:
+            rlist = select.select([self.sock],[],[],2.5)[0]
+            if len(rlist) == 0:
+                fatal(self.sock,"message was not sent within timeout")
+            buf = self.extra
+            if len(buf) < numBytes:
+                buf += self.sock.recv(4096)
+            i = -1 if len(buf) < numBytes else numBytes
+            self.extra = buf[i+1:]
+            if i >= 0:
+                result += buf[:i]
+                break
+        return result
+
+    def close(self):
+        self.sock.close()
+
 # we don't want this environment variable influencing the commands we run
 if 'GIT_DIR' in os.environ:
     del os.environ['GIT_DIR']
@@ -245,11 +307,8 @@ while True:
 
 # read input from client; this should consist of just a single line with the
 # following format: [user]:[url]
-clientReader = client.makefile()
-rlist = select.select([client],[],[],10.0)[0]
-if len(rlist) == 0:
-    fatal(client,"timeout expired")
-line = clientReader.readline()
+client = NetSocket(client)
+line = client.readline()
 
 # parse input line
 try:
@@ -257,45 +316,59 @@ try:
 except Exception as e:
     fatal(client,"could not understand input: {}".format(line))
 
-# make sure no one is posing as root
-if user.lower() == "root":
-    fatal(client,"bad user name: '{}'".format(user))
-
 # change to specified directory
 try:
     change_dir(url)
 except Exception as e:
     fatal(client,"cannot locate repository: {}".format(str(e)))
 
-# do unpack operation; the try block will catch any errors and write them to the
-# client so they can be reported back to the user
+# we need to challenge the specified user (to make sure they really have access
+# to this repository); we do this by sending 120 random bytes to the client and
+# having them write it to a file they create; this way we know they can access
+# and write to the bare repository directory and that they can at least create a
+# file with the correct user credentials
+fifoUrl = os.path.join(url,SECRETFILE)
+try_delete(fifoUrl)
+challenge = os.urandom(120)
+client.send("{}\n".format(fifoUrl))
+client.send(challenge)
+
+# do main operation; the try block will catch any errors and write them to the
+# client so they can be reported back to the user; note that the client doesn't
+# expect any more identification/authentication messages; it can safely assume
+# any subsequent message is either a log message or an error message
 try:
-    # we need to challenge the specified user (to make sure they really have
-    # access to this repository); we do this by sending 120 random bytes to the
-    # client and having them write it to a file they create; this way we know
-    # they can access and write to the bare repository directory
-    fifoUrl = os.path.join(os.getcwd(),SECRETFILE)
     try:
-        # may or may not exist; we need to make sure it doesn't
-        os.unlink(fifoUrl)
-    except:
-        pass
-    challenge = os.urandom(120)
-    client.send("{}\n".format(fifoUrl))
-    client.send(challenge)
-    rlist = select.select([client],[],[],10.0)[0]
-    if len(rlist) == 0:
-        fatal(client,"challenge was not answered within enough time")
-    try:
-        with open(fifoUrl,'r') as f:
-            rlist = select.select([f],[],[],10.0)[0]
-            client.recv(4096) # we need to pop everything off (for some reason)
-            if len(rlist) == 0:
-                fatal(client,"challenge was not answered within enough time")
-            response = f.read(120) # we expect to get all 120 bytes at once
+        fd = -1
+
+        # wait for the client to indicate they have created the file; they do
+        # this by sending a complete message line (with arbitrary bytes)
+        client.readline()
+
+        # verify uid of fifo file and that it can't be written to by others or
+        # groups
+        record = pwd.getpwnam(user)
+        stdata = os.stat(fifoUrl)
+        if stdata.st_uid != record.pw_uid or (stdata.st_mode & ~022) != 0:
+            raise Exception("file mode was incorrect")
+        time.sleep(0.125) # give the client some air time to write the data
+
+        # read bytes from the file; it may be a fifo, so open in non-block mode
+        # to prevent blocking on open (which is how fifo's behave); the remote
+        # process should already have attempted to open the file
+        fd = os.open(fifoUrl,os.O_RDONLY | os.O_NONBLOCK)
+        rlist = select.select([fd],[],[],2.5)[0] # poll file for input
+        if len(rlist) == 0:
+            raise Exception("challenge was not answered within enough time")
+        response = os.read(fd,120) # we should get all 120 bytes at once
+        os.close(fd)
         os.unlink(fifoUrl)
     except Exception as e:
-        fatal(client,"failed challenge: couldn't open file: {}".format(str(e)))
+        # we are nice to the client and at least make a connection attempt
+        # so the client can hang up if they are blocking on opening the fifo
+        if fd == -1:
+            hang_up_fifo(fifoUrl)
+        fatal(client,"failed challenge: {}".format(str(e)))
     if response != challenge: # binary string comparison
         fatal(client,"failed challenge")
 

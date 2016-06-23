@@ -9,6 +9,7 @@
 
 import os
 import sys
+import pwd
 import socket
 import getpass
 import argparse
@@ -24,7 +25,11 @@ args = parser.parse_args()
 sock = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
 
 # connect to daemon and send information (user name and url of git repo)
-sock.connect((str(args.host),int(args.port)))
+try:
+    sock.connect((str(args.host),int(args.port)))
+except socket.error as e:
+    sys.stderr.write("unpacker: error: couldn't connect: {}\n".format(str(e)))
+    exit(1)
 sock.send("{}:{}\n".format(args.user,os.getcwd()))
 
 # expect a challenge from the server that we have to fullfil
@@ -36,17 +41,29 @@ try:
     data = ""
     while len(data) < 120:
         d = reader.read(120 - len(data))
+        if d == "":
+            break
         data += d
+
     # as part of the challenge, we have to create the file (in this case we
-    # create a fifo)
-    os.mkfifo(url,0660)
+    # create a fifo); the server will verify the credentials of this file to
+    # make sure they match the user name we sent; the file must not be writable
+    # by group or others
+    record = pwd.getpwnam(args.user)
+    os.mkfifo(url,0600)
+    if os.geteuid() != record.pw_uid:
+        # process should be privileged to do this
+        os.chown(url,record.pw_uid,-1)
+
     # this tells the server we finished and to begin reading the fifo; we just
-    # send something arbitrary
+    # send something arbitrary (the url in this case)
     sock.send("{}\n".format(url))
+
+    # opening fifos block until the server opens it (slightly unusual semantics)
     with open(url,'w') as f:
         f.write(data)
 except Exception as e:
-    print "failed challenge:", e
+    print "internal error:", e
 
 # now read all further input from peer and write it to our process's stdout;
 # this will be reported back to the user
@@ -55,4 +72,4 @@ while True:
     if len(line) == 0:
         sock.close()
         exit(0)
-    sys.stdout.write(line)
+    sys.stdout.write("unpacker: {}".format(line))
