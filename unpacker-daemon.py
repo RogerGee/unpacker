@@ -349,7 +349,7 @@ try:
         # groups
         record = pwd.getpwnam(user)
         stdata = os.stat(fifoUrl)
-        if stdata.st_uid != record.pw_uid or (stdata.st_mode & ~022) != 0:
+        if stdata.st_uid != record.pw_uid or (stdata.st_mode & 022) != 0:
             raise Exception("file mode was incorrect")
         time.sleep(0.125) # give the client some air time to write the data
 

@@ -79,7 +79,7 @@ repository trees into the same destination tree.
 `unpacker` provides limited access control in the form of whitelists. Each
 branch can have its own whitelist that allows only a set of specified users to
 apply rules defined for that branch. You configure a whitelist in the
-`unpacker.config` file. You can create this file if it hasn't been created
+`unpack.config` file. You can create this file if it hasn't been created
 already.
 
 Here's the format:
@@ -102,5 +102,5 @@ as root or with elevated effective privileges.
 
 Note that this software was designed to work in a multiuser environment where
 git repositories and destination trees have shared access by a set of users who
-work collaboratively on a project that benefits from going live when pushed to a
-remote (e.g. via a group and the sticky bit).
+work collaboratively on a project. This typically involves placing a sticky-bit
+on the bare remote repository and the destination directories.
