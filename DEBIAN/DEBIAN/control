@@ -1,0 +1,6 @@
+Package: unpacker
+Version: 1.0
+Maintainer: Roger Gee <rpg11a@acu.edu>
+Description: A client-server model to deploy from Git repositories
+Architecture: amd64
+Depends: libpython2.7

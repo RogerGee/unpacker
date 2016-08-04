@@ -276,6 +276,7 @@ if 'GIT_DIR' in os.environ:
 parser = argparse.ArgumentParser(description="A daemon that deploys content from git repositories")
 parser.add_argument('-H','--host',dest='host',default='localhost',nargs='?',help='specify bind interface')
 parser.add_argument('-p','--port',dest='port',default=1024,nargs='?',help='specify bind port')
+parser.add_argument('-v','--version',action='version',version='%(prog)s 1.0')
 args = parser.parse_args()
 
 # prepare a listener socket for main server operation
