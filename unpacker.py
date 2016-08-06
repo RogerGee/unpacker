@@ -20,7 +20,7 @@ parser.add_argument('host',default='localhost',nargs='?',help="specify connect h
 parser.add_argument('port',default=1024,nargs='?',help="specify connect host port")
 parser.add_argument('-u','--user',dest="user",default=getpass.getuser(),nargs='?',
                     help="specify the user name to send to the server")
-parser.add_argument('-v','--version',action='version',version='%(prog)s 1.0')
+parser.add_argument('-v','--version',action='version',version='%(prog)s 1.1')
 args = parser.parse_args()
 
 sock = socket.socket(socket.AF_INET,socket.SOCK_STREAM)

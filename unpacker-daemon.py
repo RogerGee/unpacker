@@ -276,7 +276,7 @@ if 'GIT_DIR' in os.environ:
 parser = argparse.ArgumentParser(description="A daemon that deploys content from git repositories")
 parser.add_argument('-H','--host',dest='host',default='localhost',nargs='?',help='specify bind interface')
 parser.add_argument('-p','--port',dest='port',default=1024,nargs='?',help='specify bind port')
-parser.add_argument('-v','--version',action='version',version='%(prog)s 1.0')
+parser.add_argument('-v','--version',action='version',version='%(prog)s 1.1')
 args = parser.parse_args()
 
 # prepare a listener socket for main server operation
@@ -390,7 +390,7 @@ try:
     availBranches = map(lambda x: x[1],
                         filter(lambda x: len(x)==2,
                                map(lambda x: x.split('/'),
-                                   repo.git_command("branch -r").split("\n")[1:])))
+                                   repo.git_command("branch -r").split("\n"))))
 
     # process the repository based on the entry configuration
     if len(entryConfig['entries']) == 0:

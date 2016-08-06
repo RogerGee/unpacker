@@ -1,5 +1,5 @@
 Package: unpacker
-Version: 1.0
+Version: 1.1
 Maintainer: Roger Gee <rpg11a@acu.edu>
 Description: A client-server model to deploy from Git repositories
 Architecture: amd64
